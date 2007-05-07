@@ -117,6 +117,7 @@ Common options:\n\
 	-p ##	port number to send to or listen at (default 5001)\n\
 	-s	-t: source a pattern to network\n\
 		-r: sink (discard) all data from network\n\
+        -R 	reverse connect/accept, and have receiver call connect()\n\
 	-A	align the start of buffers to this modulus (default 16384)\n\
 	-O	start buffers at this offset from the modulus (default 0)\n\
 	-v	verbose: print more statistics\n\
@@ -234,12 +235,14 @@ char **argv;
 	if(trans) {
 		initiate=1;
 	}
+
 	if(invert_initiate) {
 		initiate = !initiate;
 	}
 
 	if(initiate)  {
-		/* initiate for socket */
+		printf("I am initiator of connect()\n");
+		/* initiate, means to call connect(), so process name */
 		if (optind == argc)
 			goto usage;
 		bzero((char *)&sinhim, sizeof(sinhim));
@@ -258,6 +261,7 @@ char **argv;
 		sinhim.sin_port = htons(port);
 		sinme.sin_port = 0;		/* free choice */
 	} else {
+		printf("I am receiver of accept()\n");
 		/* rcvr */
 		sinme.sin_port =  htons(port);
 	}
@@ -272,17 +276,19 @@ char **argv;
 	if (bufalign != 0)
 		buf +=(bufalign - ((int)buf % bufalign) + bufoffset) % bufalign;
 
-	if (trans) {
+	if (initiate) {
 	    fprintf(stdout,
-	    "ttcp-t: buflen=%d, nbuf=%d, align=%d/%d, port=%d",
-		buflen, nbuf, bufalign, bufoffset, port);
+	    "ttcp-%c: buflen=%d, nbuf=%d, align=%d/%d, port=%d",
+		    (trans ? 't' : 'r'),
+		    buflen, nbuf, bufalign, bufoffset, port);
  	    if (sockbufsize)
  		fprintf(stdout, ", sockbufsize=%d", sockbufsize);
  	    fprintf(stdout, "  %s  -> %s\n", udp?"udp":"tcp", host);
 	} else {
 	    fprintf(stdout,
- 	    "ttcp-r: buflen=%d, nbuf=%d, align=%d/%d, port=%d",
- 		buflen, nbuf, bufalign, bufoffset, port);
+ 	    "ttcp-%c: buflen=%d, nbuf=%d, align=%d/%d, port=%d",
+		    (trans ? 't' : 'r'),
+		    buflen, nbuf, bufalign, bufoffset, port);
  	    if (sockbufsize)
  		fprintf(stdout, ", sockbufsize=%d", sockbufsize);
  	    fprintf(stdout, "  %s\n", udp?"udp":"tcp");
