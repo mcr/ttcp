@@ -55,6 +55,9 @@ static char RCSid[] = "ttcp.c $Revision: 1.12 $";
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/time.h>		/* struct timeval */
+#include <strings.h>
+#include <string.h>
+#include <stdlib.h>
 
 #if defined(SYSV)
 #include <sys/times.h>
@@ -87,6 +90,8 @@ int one = 1;                    /* for 4.3 BSD style setsockopt() */
 short port = 5001;		/* TCP port number */
 char *host;			/* ptr to name of host */
 int trans;			/* 0=receive, !0=transmit mode */
+int initiate=0;
+int invert_initiate=0;          /* 0 run accept(), 1=run connect() */
 int sinkmode = 0;		/* 0=normal I/O, !0=sink/source mode */
 int verbose = 0;		/* 0=print basic info, 1=print cpu rate, proc
 				 * resource usage. */
@@ -156,7 +161,7 @@ char **argv;
 
 	if (argc < 2) goto usage;
 
-	while ((c = getopt(argc, argv, "drstuvBDTb:f:l:n:p:A:O:")) != -1) {
+	while ((c = getopt(argc, argv, "drstuvBDTb:f:l:n:p:A:O:R")) != -1) {
 		switch (c) {
 
 		case 'B':
@@ -167,6 +172,9 @@ char **argv;
 			break;
 		case 'r':
 			trans = 0;
+			break;
+		case 'R':
+			invert_initiate = 1;
 			break;
 		case 'd':
 			options |= SO_DEBUG;
@@ -222,8 +230,16 @@ char **argv;
 			goto usage;
 		}
 	}
-	if(trans)  {
-		/* xmitr */
+
+	if(trans) {
+		initiate=1;
+	}
+	if(invert_initiate) {
+		initiate = !initiate;
+	}
+
+	if(initiate)  {
+		/* initiate for socket */
 		if (optind == argc)
 			goto usage;
 		bzero((char *)&sinhim, sizeof(sinhim));
@@ -231,22 +247,13 @@ char **argv;
 		if (atoi(host) > 0 )  {
 			/* Numeric */
 			sinhim.sin_family = AF_INET;
-#if defined(cray)
-			addr_tmp = inet_addr(host);
-			sinhim.sin_addr = addr_tmp;
-#else
 			sinhim.sin_addr.s_addr = inet_addr(host);
-#endif
 		} else {
 			if ((addr=gethostbyname(host)) == NULL)
 				err("bad hostname");
 			sinhim.sin_family = addr->h_addrtype;
 			bcopy(addr->h_addr,(char*)&addr_tmp, addr->h_length);
-#if defined(cray)
-			sinhim.sin_addr = addr_tmp;
-#else
 			sinhim.sin_addr.s_addr = addr_tmp;
-#endif /* cray */
 		}
 		sinhim.sin_port = htons(port);
 		sinme.sin_port = 0;		/* free choice */
@@ -285,7 +292,7 @@ char **argv;
 		err("socket");
 	mes("socket");
 
-	if (bind(fd, &sinme, sizeof(sinme)) < 0)
+	if (bind(fd, (struct sockaddr *)&sinme, sizeof(sinme)) < 0)
 		err("bind");
 
 #if defined(SO_SNDBUF) || defined(SO_RCVBUF)
@@ -306,8 +313,8 @@ char **argv;
 
 	if (!udp)  {
 	    signal(SIGPIPE, sigpipe);
-	    if (trans) {
-		/* We are the client if transmitting */
+	    if (initiate) {
+		/* We are the client if initiate==1 */
 		if (options)  {
 #if defined(BSD42)
 			if( setsockopt(fd, SOL_SOCKET, options, 0, 0) < 0)
@@ -326,7 +333,7 @@ char **argv;
 			mes("nodelay");
 		}
 #endif
-		if(connect(fd, &sinhim, sizeof(sinhim) ) < 0)
+		if(connect(fd, (struct sockaddr *)&sinhim, sizeof(sinhim) ) < 0)
 			err("connect");
 		mes("connect");
 	    } else {
@@ -348,12 +355,12 @@ char **argv;
 		}
 		fromlen = sizeof(frominet);
 		domain = AF_INET;
-		if((fd=accept(fd, &frominet, &fromlen) ) < 0)
+		if((fd=accept(fd, (struct sockaddr *)&frominet, &fromlen) ) < 0)
 			err("accept");
 		{ struct sockaddr_in peer;
 		  int peerlen = sizeof(peer);
-		  if (getpeername(fd, (struct sockaddr_in *) &peer, 
-				&peerlen) < 0) {
+		  if (getpeername(fd, (struct sockaddr *) &peer, 
+				  &peerlen) < 0) {
 			err("getpeername");
 		  }
 		  fprintf(stderr,"ttcp-r: accept from %s\n", 
@@ -752,7 +759,7 @@ int count;
 	int len = sizeof(from);
 	register int cnt;
 	if( udp )  {
-		cnt = recvfrom( fd, buf, count, 0, &from, &len );
+		cnt = recvfrom( fd, buf, count, 0, (struct sockaddr *)&from, &len );
 		numCalls++;
 	} else {
 		if( b_flag )
@@ -782,7 +789,7 @@ int count;
 	register int cnt;
 	if( udp )  {
 again:
-		cnt = sendto( fd, buf, count, 0, &sinhim, sizeof(sinhim) );
+		cnt = sendto( fd, buf, count, 0, (struct sockaddr *)&sinhim, sizeof(sinhim) );
 		numCalls++;
 		if( cnt<0 && errno == ENOBUFS )  {
 			delay(18000);
@@ -803,7 +810,7 @@ delay(us)
 
 	tv.tv_sec = 0;
 	tv.tv_usec = us;
-	(void)select( 1, (char *)0, (char *)0, (char *)0, &tv );
+	(void)select( 1, NULL, NULL, NULL, &tv );
 }
 
 /*
