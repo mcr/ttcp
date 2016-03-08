@@ -12,13 +12,13 @@
  *      T.C. Slattery, USNA
  * Minor improvements, Mike Muuss and Terry Slattery, 16-Oct-85.
  * Modified in 1989 at Silicon Graphics, Inc.
- *	catch SIGPIPE to be able to print stats when receiver has died 
+ *	catch SIGPIPE to be able to print stats when receiver has died
  *	for tcp, don't look for sentinel during reads to allow small transfers
  *	increased default buffer size to 8K, nbuf to 2K to transfer 16MB
  *	moved default port to 5001, beyond IPPORT_USERRESERVED
- *	make sinkmode default because it is more popular, 
- *		-s now means don't sink/source 
- *	count number of read/write system calls to see effects of 
+ *	make sinkmode default because it is more popular,
+ *		-s now means don't sink/source
+ *	count number of read/write system calls to see effects of
  *		blocking from full socket buffers
  *	for tcp, -D option turns off buffered writes (sets TCP_NODELAY sockopt)
  *	buffer alignment options, -A and -O
@@ -70,9 +70,9 @@ struct rusage {
 #include <sys/resource.h>
 #endif
 
-struct sockaddr_in sinme;
-struct sockaddr_in sinhim;
-struct sockaddr_in frominet;
+struct sockaddr_storage sinme;
+struct sockaddr_storage sinhim;
+struct sockaddr_storage frominet;
 
 int domain, fromlen;
 int fd;				/* fd of network socket */
@@ -99,7 +99,7 @@ int nodelay = 0;		/* set TCP_NODELAY socket option */
 int b_flag = 0;			/* use mread() */
 int sockbufsize = 0;		/* socket buffer size to use */
 char fmt = 'K';			/* output format: k = kilobits, K = kilobytes,
-				 *  m = megabits, M = megabytes, 
+				 *  m = megabits, M = megabytes,
 				 *  g = gigabits, G = gigabytes */
 int touchdata = 0;		/* access data after reading */
 
@@ -130,7 +130,7 @@ Options specific to -t:\n\
 Options specific to -r:\n\
 	-B	for -s, only output full blocks as specified by -l (for TAR)\n\
 	-T	\"touch\": access each byte as it's read\n\
-";	
+";
 
 char stats[128];
 double nbytes;			/* bytes on net */
@@ -161,8 +161,11 @@ char **argv;
 	int c;
 
 	if (argc < 2) goto usage;
+        memset(&sinme, 0, sizeof(&sinme));
+        memset(&sinhim, 0, sizeof(&sinhim));
+        memset(&frominet, 0, sizeof(&frominet));
 
-	while ((c = getopt(argc, argv, "drstuvBDTb:f:l:n:p:A:O:R")) != -1) {
+	while ((c = getopt(argc, argv, "46drstuvBDTb:f:l:n:p:A:O:R")) != -1) {
 		switch (c) {
 
 		case 'B':
@@ -171,6 +174,13 @@ char **argv;
 		case 't':
 			trans = 1;
 			break;
+		case '4':
+                  sinme.ss_family = AF_INET;
+                  break;
+		case '6':
+                  sinme.ss_family = AF_INET6;
+                  break;
+
 		case 'r':
 			trans = 0;
 			break;
@@ -184,7 +194,7 @@ char **argv;
 #ifdef TCP_NODELAY
 			nodelay = 1;
 #else
-			fprintf(stderr, 
+			fprintf(stderr,
 	"ttcp: -D option ignored: TCP_NODELAY socket option not supported\n");
 #endif
 			break;
@@ -216,7 +226,7 @@ char **argv;
 #if defined(SO_SNDBUF) || defined(SO_RCVBUF)
 			sockbufsize = atoi(optarg);
 #else
-			fprintf(stderr, 
+			fprintf(stderr,
 "ttcp: -b option ignored: SO_SNDBUF/SO_RCVBUF socket options not supported\n");
 #endif
 			break;
@@ -241,29 +251,54 @@ char **argv;
 	}
 
 	if(initiate)  {
+          struct addrinfo *dest;
+
 		printf("I am initiator of connect()\n");
 		/* initiate, means to call connect(), so process name */
 		if (optind == argc)
 			goto usage;
 		bzero((char *)&sinhim, sizeof(sinhim));
 		host = argv[optind];
-		if (atoi(host) > 0 )  {
-			/* Numeric */
-			sinhim.sin_family = AF_INET;
-			sinhim.sin_addr.s_addr = inet_addr(host);
-		} else {
-			if ((addr=gethostbyname(host)) == NULL)
-				err("bad hostname");
-			sinhim.sin_family = addr->h_addrtype;
-			bcopy(addr->h_addr,(char*)&addr_tmp, addr->h_length);
-			sinhim.sin_addr.s_addr = addr_tmp;
-		}
-		sinhim.sin_port = htons(port);
-		sinme.sin_port = 0;		/* free choice */
+
+                if(getaddrinfo(host, NULL, NULL, &dest)!=0) {
+                  err("badhostname");
+                }
+
+                memcpy((void*)&sinhim,(void*)dest->ai_addr, dest->ai_addrlen);
+
+                switch(sinhim.ss_family) {
+                case AF_INET:
+                  ((struct sockaddr_in *)&sinhim)->sin_port = htons(port);
+                  /* free choice */
+                  ((struct sockaddr_in *)&sinme)->sin_port = 0;
+                  break;
+
+                case AF_INET6:
+                  ((struct sockaddr_in6 *)&sinhim)->sin6_port = htons(port);
+                  /* free choice */
+                  ((struct sockaddr_in6 *)&sinme)->sin6_port = 0;
+                  break;
+                }
+
+                sinme.ss_family = sinhim.ss_family;
 	} else {
 		printf("I am receiver of accept()\n");
+
 		/* rcvr */
-		sinme.sin_port =  htons(port);
+                switch(sinme.ss_family) {
+                case AF_INET:
+                  ((struct sockaddr_in *)&sinme)->sin_port = htons(port);
+                  break;
+
+                case AF_INET6:
+                  ((struct sockaddr_in6 *)&sinme)->sin6_port = htons(port);
+                  break;
+
+                default:
+                  fprintf(stderr, "receive must specify address family: %u\n",
+                          sinme.ss_family);
+                }
+
 	}
 
 
@@ -294,12 +329,14 @@ char **argv;
  	    fprintf(stdout, "  %s\n", udp?"udp":"tcp");
 	}
 
-	if ((fd = socket(AF_INET, udp?SOCK_DGRAM:SOCK_STREAM, 0)) < 0)
+        if ((fd = socket(sinme.ss_family, udp?SOCK_DGRAM:SOCK_STREAM, 0)) < 0)
 		err("socket");
 	mes("socket");
 
-	if (bind(fd, (struct sockaddr *)&sinme, sizeof(sinme)) < 0)
-		err("bind");
+        if(!initiate) {
+          if (bind(fd, (struct sockaddr *)&sinme, sizeof(sinme)) < 0)
+            err("bind");
+        }
 
 #if defined(SO_SNDBUF) || defined(SO_RCVBUF)
 	if (sockbufsize) {
@@ -333,7 +370,7 @@ char **argv;
 		if (nodelay) {
 			struct protoent *p;
 			p = getprotobyname("tcp");
-			if( p && setsockopt(fd, p->p_proto, TCP_NODELAY, 
+			if( p && setsockopt(fd, p->p_proto, TCP_NODELAY,
 			    &one, sizeof(one)) < 0)
 				err("setsockopt: nodelay");
 			mes("nodelay");
@@ -343,7 +380,7 @@ char **argv;
 			err("connect");
 		mes("connect");
 	    } else {
-		/* otherwise, we are the server and 
+		/* otherwise, we are the server and
 	         * should listen for the connections
 	         */
 #if defined(ultrix) || defined(sgi)
@@ -363,20 +400,35 @@ char **argv;
 		domain = AF_INET;
 		if((fd=accept(fd, (struct sockaddr *)&frominet, &fromlen) ) < 0)
 			err("accept");
-		{ struct sockaddr_in peer;
+		{ struct sockaddr_storage peer;
 		  int peerlen = sizeof(peer);
-		  if (getpeername(fd, (struct sockaddr *) &peer, 
+                  char namebuf[256];
+
+		  if (getpeername(fd, (struct sockaddr *) &peer,
 				  &peerlen) < 0) {
 			err("getpeername");
 		  }
-		  fprintf(stderr,"ttcp-r: accept from %s\n", 
-			inet_ntoa(peer.sin_addr));
+                  switch(peer.ss_family) {
+                  case AF_INET:
+                    inet_ntop(peer.ss_family,
+                              &((struct sockaddr_in *)&peer)->sin_addr,
+                              namebuf, 256);
+                    break;
+                  case AF_INET6:
+                    inet_ntop(peer.ss_family,
+                              &((struct sockaddr_in6 *)&peer)->sin6_addr,
+                              namebuf, 256);
+                    break;
+                  }
+
+		  fprintf(stderr,"ttcp-r: accept from %s\n",
+                          namebuf);
 		}
 	    }
 	}
 	prep_timer();
 	errno = 0;
-	if (sinkmode) {      
+	if (sinkmode) {
 		register int cnt;
 		if (trans)  {
 			pattern( buf, buflen );
@@ -540,7 +592,7 @@ getrusage(ignored, ru)
 }
 
 /*ARGSUSED*/
-static 
+static
 gettimeofday(tp, zp)
     struct timeval *tp;
     struct timezone *zp;
@@ -562,7 +614,7 @@ prep_timer()
 
 /*
  *			R E A D _ T I M E R
- * 
+ *
  */
 double
 read_timer(str,len)
