@@ -117,6 +117,8 @@ Common options:\n\
 	-p ##	port number to send to or listen at (default 5001)\n\
 	-s	-t: source a pattern to network\n\
 		-r: sink (discard) all data from network\n\
+        -4      set IPv4 family for socket\n\
+        -6      set IPv6 family for socket\n\
         -R 	reverse connect/accept, and have receiver call connect()\n\
 	-A	align the start of buffers to this modulus (default 16384)\n\
 	-O	start buffers at this offset from the modulus (default 0)\n\
